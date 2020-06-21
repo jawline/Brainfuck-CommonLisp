@@ -13,7 +13,6 @@
 (defconstant outp-char (make-symbol "write character"))
 
 ; Control flow
-(defconstant jump-back (make-symbol "jump back"))
 (defconstant jump-forward (make-symbol "jump forward"))
 
 (defun lex-to-token (word)
@@ -27,7 +26,6 @@
     ((string= word ",") inp-char)
     ((string= word ".") outp-char)   
 
-    ((string= word "]") jump-back)
     ((string= word "[") jump-forward)
 
     (t (error (make-condition 'lex-error)))
@@ -50,22 +48,15 @@
   )
 )
 
-(defclass interp-state ()
+; ---- END OF PARSING ----
+
+; ---- STATE ----
+(defclass bf-state ()
   (
-    (
-      program
-      :initarg :program
-      :accessor program
-    )
     (
       data
       :initarg :data
       :accessor data
-    )
-    (
-      instruction-pointer
-      :initarg :instruction-pointer
-      :accessor name
     )
     (
       data-pointer
@@ -75,111 +66,85 @@
   )
 )
 
-(defun bf-mk-state (program)
-  (make-instance 'interp-state :program (make-array (length program) :initial-contents program) :data (make-array 30000) :instruction-pointer 0 :data-pointer 0)
+(defun bf-mk-state ()
+  (make-instance 'bf-state :data (make-array 30000) :data-pointer 0)
 )
+; ---- END OF STATE ----
 
-(defun print-state (state)
-  (progn
-    (print (slot-value state 'program))
-    (print (slot-value state 'instruction-pointer))
-    (print (slot-value state 'data-pointer))
-  )
-)
+; ---- CORE INTERP ----
 
-(defun bf-step-inner (state)
+(declaim (ftype (function) bf-run-program))
+
+(defun bf-step-program (program ip state)
   (symbol-macrolet
     (
-      (program (slot-value state 'program))
       (data (slot-value state 'data))
-      (ip (slot-value state 'instruction-pointer))
       (dp (slot-value state 'data-pointer))
       (data-under-dp (aref data dp))
       (current (first (aref program ip)))
+      (subprogram (second (aref program ip)))
     )
     (cond
-
+      ((>= ip (length program)) nil)
       ; IO
       ((eq current inp-char) (
         progn
         (setf data-under-dp (read-char *standard-input*))
-        (setf ip (+ ip 1))
+        (+ ip 1)
       ))
 
       ((eq current outp-char) (
         progn
-        (print (code-char data-under-dp))
-        (setf ip (+ ip 1))
+        (write (code-char data-under-dp))
+        (+ ip 1)
       ))
 
       ; shift DP left and right
       ((eq current tape-left) (
         progn
         (setf dp (- dp 1))
-        (setf ip (+ ip 1))
+        (+ ip 1)
       ))
 
       ((eq current tape-right) (
         progn
         (setf dp (+ dp 1))
-        (setf ip (+ ip 1))
+        (+ ip 1)
       ))
 
       ; INC and DEC data
       ((eq current inc-cell) (
         progn
         (setf data-under-dp (+ data-under-dp 1))
-        (setf ip (+ ip 1))
+        (+ ip 1)
       ))
 
       ((eq current dec-cell) (
         progn
         (setf data-under-dp (- data-under-dp 1))
-        (setf ip (+ ip 1))
+        (+ ip 1)
       ))
 
-      ; Jump back and forward
-      ((eq current jump-back) (
-        progn
-        (print "FK")
-        (exit) 
-      ))
-
+      ; Looping
       ((eq current jump-forward) (
         progn
-        (print "UN")
-        (exit)
+        (bf-run-program (make-array (length subprogram) :initial-contents subprogram) 0 state)
+        (if (eq data-under-dp 0) (+ ip 1) ip)
       ))
     )
   )
 )
 
-(defun bf-step-program (state)
-  (if 
-      (<
-        (slot-value state 'instruction-pointer)
-        (length (slot-value state 'program))
-      )
-      (progn
-       ;(print "CAN EXEC")
-       (bf-step-inner state)
-       ;(print-state state)
-      )
-      nil 
-  )
+(defun bf-run-program (program ip state)
+  (let ((nip (bf-step-program program ip state)))
+       (if nip (bf-run-program program nip state) nil))
 )
 
-(defun bf-run-program (state)
-  (if
-      (bf-step-program state)
-      (bf-run-program state)
-      nil 
-  )
-)
+; ---- END INTERP
 
 (with-open-file (f (merge-pathnames "./hello_world.bf"))
   (let ((tokens (parse-stream f)))
-    (bf-run-program (bf-mk-state tokens))
+    (bf-run-program (make-array (length tokens) :initial-contents tokens) 0 (bf-mk-state))
   )
 )
 
